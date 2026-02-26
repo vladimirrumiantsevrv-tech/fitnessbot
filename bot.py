@@ -1,116 +1,143 @@
 """
-Бот на pyTelegramBotAPI - с PostgreSQL на Railway
+Бот на pyTelegramBotAPI - МАКСИМАЛЬНАЯ ОТЛАДКА
 """
 import os
+import sys
 import time
-import psycopg2  # вместо sqlite3
-from psycopg2.extras import RealDictCursor
-import telebot
-from telebot import types
+import traceback
 
-# Токен из переменных окружения
+print("=" * 50)
+print("🚀 ЗАПУСК БОТА - НАЧАЛО")
+print("=" * 50)
+print(f"🐍 Python версия: {sys.version}")
+print(f"📂 Текущая директория: {os.getcwd()}")
+print(f"📋 Содержимое директории: {os.listdir('.')}")
+
+# Проверяем переменные окружения
+print("\n🔍 ПРОВЕРКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ:")
 TOKEN = os.environ.get('BOT_TOKEN')
-DATABASE_URL = os.environ.get('DATABASE_URL')  # Railway автоматически добавляет эту переменную
+DATABASE_URL = os.environ.get('DATABASE_URL')
+
+print(f"BOT_TOKEN: {'✅ НАЙДЕН' if TOKEN else '❌ НЕ НАЙДЕН'}")
+print(f"DATABASE_URL: {'✅ НАЙДЕН' if DATABASE_URL else '❌ НЕ НАЙДЕН'}")
+
+if DATABASE_URL:
+    # Маскируем пароль для безопасности
+    masked_url = DATABASE_URL.replace(DATABASE_URL.split(':')[2].split('@')[0], '****')
+    print(f"DATABASE_URL (скрыт): {masked_url}")
 
 if not TOKEN:
-    raise ValueError("❌ BOT_TOKEN не найден в переменных окружения!")
-if not DATABASE_URL:
-    raise ValueError("❌ DATABASE_URL не найден! Добавьте PostgreSQL в проект Railway")
+    print("❌ КРИТИЧЕСКАЯ ОШИБКА: BOT_TOKEN не найден!")
+    sys.exit(1)
 
-# Функция для работы с PostgreSQL
-def get_db_connection():
-    """Подключение к PostgreSQL"""
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-    return conn
+# Импортируем библиотеки
+print("\n📚 ИМПОРТ БИБЛИОТЕК:")
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    print("✅ psycopg2 импортирован")
+except Exception as e:
+    print(f"❌ Ошибка импорта psycopg2: {e}")
+    traceback.print_exc()
 
-def get_groups():
-    """Получить все группы мышц из PostgreSQL"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT DISTINCT muscle_group FROM exercises ORDER BY muscle_group')
-    groups = [row['muscle_group'] for row in cursor.fetchall()]
-    conn.close()
-    return groups
+try:
+    import telebot
+    from telebot import types
+    print("✅ telebot импортирован")
+except Exception as e:
+    print(f"❌ Ошибка импорта telebot: {e}")
+    traceback.print_exc()
 
-def get_exercises_by_group(group):
-    """Получить упражнения по группе из PostgreSQL"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, exercise_name FROM exercises WHERE muscle_group = %s ORDER BY exercise_name', (group,))
-    exercises = cursor.fetchall()
-    conn.close()
-    return exercises
+# Проверка подключения к БД
+print("\n🔄 ПРОВЕРКА ПОДКЛЮЧЕНИЯ К БД:")
+try:
+    if DATABASE_URL:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        cursor = conn.cursor()
+        
+        # Проверяем существование таблицы
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'exercises'
+            );
+        """)
+        table_exists = cursor.fetchone()['exists']
+        print(f"📊 Таблица 'exercises' существует: {table_exists}")
+        
+        if table_exists:
+            cursor.execute("SELECT COUNT(*) FROM exercises")
+            count = cursor.fetchone()['count']
+            print(f"📊 Количество записей в exercises: {count}")
+        
+        conn.close()
+        print("✅ Подключение к БД успешно")
+    else:
+        print("⚠️ DATABASE_URL не указан, пропускаем проверку БД")
+except Exception as e:
+    print(f"❌ Ошибка подключения к БД: {e}")
+    traceback.print_exc()
 
-def get_exercise_by_id(exercise_id):
-    """Получить детали упражнения по ID из PostgreSQL"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT exercise_name, description, youtube_link, equipment_needed, muscle_group, image_url 
-        FROM exercises WHERE id = %s
-    ''', (exercise_id,))
-    exercise = cursor.fetchone()
-    conn.close()
-    return exercise
+# Создание бота
+print("\n🤖 СОЗДАНИЕ БОТА:")
+try:
+    bot = telebot.TeleBot(TOKEN)
+    print("✅ Экземпляр бота создан")
+except Exception as e:
+    print(f"❌ Ошибка создания бота: {e}")
+    traceback.print_exc()
+    sys.exit(1)
 
-# Функция для инициализации таблиц (если их нет)
-def init_database():
-    """Создает таблицы при первом запуске"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS exercises (
-            id SERIAL PRIMARY KEY,
-            muscle_group TEXT NOT NULL,
-            exercise_name TEXT NOT NULL,
-            description TEXT,
-            youtube_link TEXT,
-            equipment_needed TEXT,
-            image_url TEXT
+# Проверка работы бота
+print("\n📡 ПРОВЕРКА СВЯЗИ С TELEGRAM:")
+try:
+    me = bot.get_me()
+    print(f"✅ Бот @{me.username} (ID: {me.id}) успешно подключен")
+except Exception as e:
+    print(f"❌ Ошибка подключения к Telegram: {e}")
+    traceback.print_exc()
+
+# Простейший обработчик
+@bot.message_handler(commands=['start'])
+def start_command(message):
+    print(f"📨 Получена команда /start от {message.from_user.id}")
+    try:
+        bot.send_message(
+            message.chat.id,
+            f"👋 Привет, {message.from_user.first_name}!\n\nБот работает и подключен к БД!"
         )
-    ''')
-    conn.commit()
-    conn.close()
-    print("✅ Таблицы в PostgreSQL проверены/созданы")
+        print("✅ Сообщение отправлено")
+    except Exception as e:
+        print(f"❌ Ошибка отправки: {e}")
 
-# Создаем бота
-bot = telebot.TeleBot(TOKEN)
+@bot.message_handler(commands=['test'])
+def test_command(message):
+    print(f"📨 Получена команда /test")
+    try:
+        if DATABASE_URL:
+            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM exercises")
+            count = cursor.fetchone()['count']
+            conn.close()
+            bot.send_message(message.chat.id, f"✅ В базе {count} упражнений")
+        else:
+            bot.send_message(message.chat.id, "❌ База не подключена")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)[:100]}")
 
-# Инициализируем базу данных при старте
-init_database()
-
-# ... ВЕСЬ ОСТАЛЬНОЙ КОД БЕЗ ИЗМЕНЕНИЙ ...
-# (обработчики команд и кнопок остаются точно такими же)
+print("\n" + "=" * 50)
+print("🚀 ЗАПУСК ПОЛЛИНГА")
+print("=" * 50)
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("🚀 БОТ ЗАПУСКАЕТСЯ НА RAILWAY С POSTGRESQL")
-    print("=" * 50)
-    
-    # Проверяем подключение к БД
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM exercises')
-        count = cursor.fetchone()['count']
-        conn.close()
-        print(f"📊 PostgreSQL: {count} упражнений в базе")
-    except Exception as e:
-        print(f"❌ Ошибка подключения к PostgreSQL: {e}")
-    
-    try:
-        bot_info = bot.get_me()
-        print(f"🤖 Бот: @{bot_info.username}")
-    except:
-        print("🤖 Бот: (не удалось получить имя)")
-    
-    print("✅ Бот готов к работе!")
-    print("=" * 50)
-    
     while True:
         try:
+            print("🔄 Удаление вебхука...")
             bot.remove_webhook()
             time.sleep(1)
+            
+            print("🔄 Запуск polling...")
             bot.polling(
                 none_stop=True,
                 interval=0,
@@ -118,6 +145,7 @@ if __name__ == "__main__":
                 skip_pending=True
             )
         except Exception as e:
-            print(f"❌ Ошибка: {e}")
+            print(f"❌ Ошибка polling: {e}")
+            traceback.print_exc()
             print("🔄 Перезапуск через 5 секунд...")
             time.sleep(5)
