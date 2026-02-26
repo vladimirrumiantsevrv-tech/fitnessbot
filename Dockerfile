@@ -10,4 +10,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Запускаем бота
-CMD ["python", "simple_bot.py"]
+CMD ["python", "bot.py"]
