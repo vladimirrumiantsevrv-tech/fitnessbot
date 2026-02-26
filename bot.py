@@ -1,151 +1,191 @@
 """
-Бот на pyTelegramBotAPI - МАКСИМАЛЬНАЯ ОТЛАДКА
+Фитнес бот для Telegram - ПОЛНАЯ ВЕРСИЯ
 """
 import os
-import sys
 import time
-import traceback
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import telebot
+from telebot import types
 
-print("=" * 50)
-print("🚀 ЗАПУСК БОТА - НАЧАЛО")
-print("=" * 50)
-print(f"🐍 Python версия: {sys.version}")
-print(f"📂 Текущая директория: {os.getcwd()}")
-print(f"📋 Содержимое директории: {os.listdir('.')}")
-
-# Проверяем переменные окружения
-print("\n🔍 ПРОВЕРКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ:")
+# Токен из переменных окружения
 TOKEN = os.environ.get('BOT_TOKEN')
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
-print(f"BOT_TOKEN: {'✅ НАЙДЕН' if TOKEN else '❌ НЕ НАЙДЕН'}")
-print(f"DATABASE_URL: {'✅ НАЙДЕН' if DATABASE_URL else '❌ НЕ НАЙДЕН'}")
-
-if DATABASE_URL:
-    # Маскируем пароль для безопасности
-    masked_url = DATABASE_URL.replace(DATABASE_URL.split(':')[2].split('@')[0], '****')
-    print(f"DATABASE_URL (скрыт): {masked_url}")
-
 if not TOKEN:
-    print("❌ КРИТИЧЕСКАЯ ОШИБКА: BOT_TOKEN не найден!")
-    sys.exit(1)
+    raise ValueError("❌ BOT_TOKEN не найден!")
 
-# Импортируем библиотеки
-print("\n📚 ИМПОРТ БИБЛИОТЕК:")
-try:
-    import psycopg2
-    from psycopg2.extras import RealDictCursor
-    print("✅ psycopg2 импортирован")
-except Exception as e:
-    print(f"❌ Ошибка импорта psycopg2: {e}")
-    traceback.print_exc()
-
-try:
-    import telebot
-    from telebot import types
-    print("✅ telebot импортирован")
-except Exception as e:
-    print(f"❌ Ошибка импорта telebot: {e}")
-    traceback.print_exc()
-
-# Проверка подключения к БД
-print("\n🔄 ПРОВЕРКА ПОДКЛЮЧЕНИЯ К БД:")
-try:
-    if DATABASE_URL:
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-        cursor = conn.cursor()
-        
-        # Проверяем существование таблицы
-        cursor.execute("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = 'exercises'
-            );
-        """)
-        table_exists = cursor.fetchone()['exists']
-        print(f"📊 Таблица 'exercises' существует: {table_exists}")
-        
-        if table_exists:
-            cursor.execute("SELECT COUNT(*) FROM exercises")
-            count = cursor.fetchone()['count']
-            print(f"📊 Количество записей в exercises: {count}")
-        
-        conn.close()
-        print("✅ Подключение к БД успешно")
-    else:
-        print("⚠️ DATABASE_URL не указан, пропускаем проверку БД")
-except Exception as e:
-    print(f"❌ Ошибка подключения к БД: {e}")
-    traceback.print_exc()
-
-# Создание бота
-print("\n🤖 СОЗДАНИЕ БОТА:")
-try:
-    bot = telebot.TeleBot(TOKEN)
-    print("✅ Экземпляр бота создан")
-except Exception as e:
-    print(f"❌ Ошибка создания бота: {e}")
-    traceback.print_exc()
-    sys.exit(1)
-
-# Проверка работы бота
-print("\n📡 ПРОВЕРКА СВЯЗИ С TELEGRAM:")
-try:
-    me = bot.get_me()
-    print(f"✅ Бот @{me.username} (ID: {me.id}) успешно подключен")
-except Exception as e:
-    print(f"❌ Ошибка подключения к Telegram: {e}")
-    traceback.print_exc()
-
-# Простейший обработчик
-@bot.message_handler(commands=['start'])
-def start_command(message):
-    print(f"📨 Получена команда /start от {message.from_user.id}")
-    try:
-        bot.send_message(
-            message.chat.id,
-            f"👋 Привет, {message.from_user.first_name}!\n\nБот работает и подключен к БД!"
-        )
-        print("✅ Сообщение отправлено")
-    except Exception as e:
-        print(f"❌ Ошибка отправки: {e}")
-
-@bot.message_handler(commands=['test'])
-def test_command(message):
-    print(f"📨 Получена команда /test")
-    try:
-        if DATABASE_URL:
-            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM exercises")
-            count = cursor.fetchone()['count']
-            conn.close()
-            bot.send_message(message.chat.id, f"✅ В базе {count} упражнений")
-        else:
-            bot.send_message(message.chat.id, "❌ База не подключена")
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)[:100]}")
-
-print("\n" + "=" * 50)
-print("🚀 ЗАПУСК ПОЛЛИНГА")
+print("=" * 50)
+print("🚀 ЗАПУСК ФИТНЕС БОТА")
 print("=" * 50)
 
+# Создаем бота
+bot = telebot.TeleBot(TOKEN)
+
+# Функции для работы с PostgreSQL
+def get_db_connection():
+    """Подключение к базе данных"""
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
+def get_groups():
+    """Получить все группы мышц"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT DISTINCT muscle_group FROM exercises ORDER BY muscle_group')
+    groups = [row['muscle_group'] for row in cursor.fetchall()]
+    conn.close()
+    return groups
+
+def get_exercises_by_group(group):
+    """Получить упражнения по группе мышц"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, exercise_name FROM exercises WHERE muscle_group = %s ORDER BY exercise_name', (group,))
+    exercises = cursor.fetchall()
+    conn.close()
+    return exercises
+
+def get_exercise_by_id(exercise_id):
+    """Получить детали упражнения по ID"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT exercise_name, description, youtube_link, equipment_needed, muscle_group 
+        FROM exercises WHERE id = %s
+    ''', (exercise_id,))
+    exercise = cursor.fetchone()
+    conn.close()
+    return exercise
+
+# Проверка подключения к БД
+try:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM exercises')
+    count = cursor.fetchone()['count']
+    conn.close()
+    print(f"✅ Подключено к БД. Найдено {count} упражнений")
+    print(f"📊 Группы мышц: {', '.join(get_groups())}")
+except Exception as e:
+    print(f"❌ Ошибка подключения к БД: {e}")
+
+# Обработчик команды /start
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    """Показывает группы мышц"""
+    print(f"📨 /start от {message.from_user.first_name}")
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    groups = get_groups()
+    
+    for group in groups:
+        button = types.InlineKeyboardButton(group, callback_data=f'group_{group}')
+        markup.add(button)
+    
+    bot.send_message(
+        message.chat.id,
+        f"👋 Привет, {message.from_user.first_name}!\n\nВыбери группу мышц:",
+        reply_markup=markup
+    )
+
+# Обработчик нажатий на кнопки
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    """Обрабатывает все нажатия на кнопки"""
+    chat_id = call.message.chat.id
+    message_id = call.message.message_id
+    data = call.data
+    
+    try:
+        # Нажатие на группу мышц
+        if data.startswith('group_'):
+            group = data.replace('group_', '')
+            exercises = get_exercises_by_group(group)
+            
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            
+            for ex in exercises:
+                button = types.InlineKeyboardButton(
+                    ex['exercise_name'], 
+                    callback_data=f'ex_{ex["id"]}'
+                )
+                markup.add(button)
+            
+            markup.add(types.InlineKeyboardButton("◀️ Назад к группам", callback_data="back_to_groups"))
+            
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=f"💪 *Группа: {group}*\n\nВыбери упражнение:",
+                reply_markup=markup,
+                parse_mode='Markdown'
+            )
+        
+        # Нажатие на упражнение
+        elif data.startswith('ex_'):
+            exercise_id = int(data.replace('ex_', ''))
+            exercise = get_exercise_by_id(exercise_id)
+            
+            if exercise:
+                name = exercise['exercise_name']
+                desc = exercise['description']
+                yt_link = exercise['youtube_link']
+                equip = exercise['equipment_needed']
+                group = exercise['muscle_group']
+                
+                # Формируем текст
+                text = f"🏋️‍♂️ *{name}*\n\n"
+                text += f"*Описание:* {desc}\n"
+                if equip:
+                    text += f"*Оборудование:* {equip}\n"
+                
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                
+                if yt_link and yt_link.startswith('http'):
+                    markup.add(types.InlineKeyboardButton("🎥 Смотреть видео", url=yt_link))
+                
+                markup.add(types.InlineKeyboardButton("◀️ Назад", callback_data=f'group_{group}'))
+                markup.add(types.InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu"))
+                
+                bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    reply_markup=markup,
+                    parse_mode='Markdown',
+                    disable_web_page_preview=True
+                )
+        
+        # Навигационные кнопки
+        elif data == "back_to_groups" or data == "main_menu":
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            groups = get_groups()
+            
+            for group in groups:
+                button = types.InlineKeyboardButton(group, callback_data=f'group_{group}')
+                markup.add(button)
+            
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text="Выбери группу мышц:",
+                reply_markup=markup
+            )
+    
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        bot.send_message(chat_id, "❌ Произошла ошибка. Нажми /start")
+
+# Запуск бота
 if __name__ == "__main__":
+    print("=" * 50)
+    print("✅ БОТ ГОТОВ К РАБОТЕ!")
+    print("=" * 50)
+    
     while True:
         try:
-            print("🔄 Удаление вебхука...")
-            bot.remove_webhook()
-            time.sleep(1)
-            
-            print("🔄 Запуск polling...")
-            bot.polling(
-                none_stop=True,
-                interval=0,
-                timeout=20,
-                skip_pending=True
-            )
+            bot.polling(none_stop=True)
         except Exception as e:
-            print(f"❌ Ошибка polling: {e}")
-            traceback.print_exc()
-            print("🔄 Перезапуск через 5 секунд...")
-            time.sleep(5)
+            print(f"❌ Ошибка: {e}")
+            print("🔄 Перезапуск через 10 секунд...")
+            time.sleep(10)
