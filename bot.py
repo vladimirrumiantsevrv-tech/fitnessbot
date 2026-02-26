@@ -1,29 +1,54 @@
-"""
-Бот на pyTelegramBotAPI - С ТОКЕНОМ ИЗ .ENV
-"""
 import os
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import telebot
 from telebot import types
-from dotenv import load_dotenv
 
-# Загружаем переменные из .env файла
-load_dotenv()
-
-# Получаем токен из переменных окружения
-TOKEN = os.getenv('BOT_TOKEN')
-
-if not TOKEN:
-    raise ValueError("Токен не найден! Создайте файл .env с BOT_TOKEN=ваш_токен")
+# --- НОВОЕ: Получаем URL базы данных из переменной окружения ---
+DATABASE_URL = os.environ.get('DATABASE_URL')
+# Railway автоматически добавит эту переменную
 
 def get_db_connection():
-    conn = sqlite3.connect('fitness_bot.db')
-    conn.row_factory = sqlite3.Row
+    """Подключение к PostgreSQL вместо SQLite"""
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return conn
 
-# ... остальной код без изменений ...
+def init_db():
+    """Создаем таблицы при первом запуске (если их нет)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # SQL для PostgreSQL немного отличается
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS exercises (
+            id SERIAL PRIMARY KEY,
+            muscle_group TEXT NOT NULL,
+            exercise_name TEXT NOT NULL,
+            description TEXT,
+            youtube_link TEXT,
+            equipment_needed TEXT,
+            image_url TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    print("✅ Таблицы в PostgreSQL проверены/созданы.")
 
-# Создаем бота
+def get_groups():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT DISTINCT muscle_group FROM exercises ORDER BY muscle_group')
+    groups = [row['muscle_group'] for row in cursor.fetchall()]
+    conn.close()
+    return groups
+
+# --- Остальные функции (get_exercises_by_group, get_exercise_by_id) ---
+# --- нужно обновить аналогично, используя psycopg2 и словари ---
+
+# Инициализация базы при старте бота
+init_db()
+
+# Токен также берем из переменной окружения
+TOKEN = os.environ.get('BOT_TOKEN')
 bot = telebot.TeleBot(TOKEN)
 
 def get_db_connection():
