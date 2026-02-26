@@ -1,0 +1,40 @@
+# Файлы с секретами
+.env
+config.json
+*.env
+
+# База данных
+*.db
+*.db-journal
+
+# Папки Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Логи
+*.log
+*.log.*
+
+# Файлы IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Временные файлы
+*.tmp
+*.temp
+*.bak
+
+# Файлы проекта (которые не нужно пушить)
+exercises.csv
+*.csv
