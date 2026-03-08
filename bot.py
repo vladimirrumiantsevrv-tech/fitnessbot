@@ -221,12 +221,14 @@ def callback_handler(call):
                     try:
                         bot.send_photo(chat_id=chat_id, photo=img_start, caption="📍 Исходное положение")
                     except Exception as e:
-                        print(f"⚠️ Не удалось отправить фото: {e}")
+                        print(f"⚠️ Не удалось отправить фото (start): {e}")
+                        bot.send_message(chat_id, f"⚠️ Ошибка фото (исходное): {str(e)[:300]}")
                 if img_finish and img_finish.startswith('http'):
                     try:
                         bot.send_photo(chat_id=chat_id, photo=img_finish, caption="📍 Конечная фаза")
                     except Exception as e:
-                        print(f"⚠️ Не удалось отправить фото: {e}")
+                        print(f"⚠️ Не удалось отправить фото (finish): {e}")
+                        bot.send_message(chat_id, f"⚠️ Ошибка фото (конечная): {str(e)[:300]}")
                 
                 # 3. Прямое mp4-видео (если есть)
                 if direct_url and direct_url.strip().lower().endswith(('.mp4', '.webm', '.mov')):
