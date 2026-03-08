@@ -205,14 +205,16 @@ def callback_handler(call):
                 direct_url = exercise.get('direct_video_url') or ''
                 equip = exercise['equipment_needed']
                 group = exercise['muscle_group']
-                img_start = (exercise.get('image_start_url') or '').strip()
+                # Пробуем разные варианты имён колонок (PostgreSQL, миграции)
+                img_start = (exercise.get('image_start_url') or exercise.get('image_url') or '').strip()
                 img_finish = (exercise.get('image_finish_url') or '').strip()
                 
                 # Отладка: показываем, есть ли URL картинок
                 has_start = bool(img_start and img_start.startswith('http'))
                 has_finish = bool(img_finish and img_finish.startswith('http'))
                 if not has_start and not has_finish:
-                    bot.send_message(chat_id, f"🔍 Отладка: URL картинок не найдены в данных (колонки image_start_url, image_finish_url)")
+                    keys = ', '.join(sorted(exercise.keys()))
+                    bot.send_message(chat_id, f"🔍 Отладка: URL не найдены. Колонки в записи: {keys[:400]}")
                 
                 # 1. Редактируем сообщение в заголовок (техника ниже)
                 bot.edit_message_text(
