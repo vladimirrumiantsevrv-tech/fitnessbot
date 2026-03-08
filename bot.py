@@ -3,6 +3,7 @@
 """
 import os
 import time
+import requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import telebot
@@ -10,7 +11,7 @@ from telebot import types
 
 # Токен из переменных окружения
 TOKEN = os.environ.get('BOT_TOKEN')
-DATABASE_URL = os.environ.get('DATABASE_URL')
+DATABASE_URL = os.environ.get('DATABASE_URL') or os.environ.get('DATABASE_PRIVATE_URL')
 
 if not TOKEN:
     raise ValueError("❌ BOT_TOKEN не найден!")
@@ -22,10 +23,34 @@ print("=" * 50)
 # Создаем бота
 bot = telebot.TeleBot(TOKEN)
 
+def send_photo_with_fallback(chat_id, url, caption=""):
+    """Сначала пробует по URL, при ошибке — скачивает и отправляет байтами"""
+    try:
+        bot.send_photo(chat_id=chat_id, photo=url, caption=caption)
+        return True
+    except Exception as e:
+        print(f"⚠️ send_photo URL fail: {e}")
+        try:
+            r = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0 (compatible)'})
+            r.raise_for_status()
+            ct = r.headers.get('content-type', '')
+            if 'image' in ct or not ct:
+                bot.send_photo(chat_id=chat_id, photo=r.content, caption=caption)
+                return True
+        except Exception as e2:
+            print(f"⚠️ send_photo fallback fail: {e2}")
+        return False
+
 # Функции для работы с PostgreSQL
 def get_db_connection():
     """Подключение к базе данных"""
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    url = DATABASE_URL or ''
+    if not url:
+        raise ValueError("DATABASE_URL не задан")
+    # Railway и облачный PostgreSQL требуют SSL
+    if 'sslmode=' not in url and ('rlwy.net' in url or 'railway' in url.lower() or 'amazonaws.com' in url):
+        url = url + ('&' if '?' in url else '?') + 'sslmode=require'
+    return psycopg2.connect(url, cursor_factory=RealDictCursor)
 
 def get_groups():
     """Получить все группы мышц"""
@@ -218,13 +243,6 @@ def callback_handler(call):
                 img_start = (exercise.get('image_start_url') or exercise.get('image_url') or '').strip()
                 img_finish = (exercise.get('image_finish_url') or '').strip()
                 
-                # Отладка: показываем, есть ли URL картинок
-                has_start = bool(img_start and img_start.startswith('http'))
-                has_finish = bool(img_finish and img_finish.startswith('http'))
-                if not has_start and not has_finish:
-                    keys = ', '.join(sorted(exercise.keys()))
-                    bot.send_message(chat_id, f"🔍 Отладка: URL не найдены. Колонки в записи: {keys[:400]}")
-                
                 # 1. Редактируем сообщение в заголовок (техника ниже)
                 bot.edit_message_text(
                     chat_id=chat_id,
@@ -233,19 +251,11 @@ def callback_handler(call):
                     parse_mode='Markdown'
                 )
                 
-                # 2. Картинки техники — начало и окончание
+                # 2. Картинки техники — начало и окончание (с fallback: скачать и отправить при 400)
                 if img_start and img_start.startswith('http'):
-                    try:
-                        bot.send_photo(chat_id=chat_id, photo=img_start, caption="📍 Исходное положение")
-                    except Exception as e:
-                        print(f"⚠️ Не удалось отправить фото (start): {e}")
-                        bot.send_message(chat_id, f"⚠️ Ошибка фото (исходное): {str(e)[:300]}")
+                    send_photo_with_fallback(chat_id, img_start, "📍 Исходное положение")
                 if img_finish and img_finish.startswith('http'):
-                    try:
-                        bot.send_photo(chat_id=chat_id, photo=img_finish, caption="📍 Конечная фаза")
-                    except Exception as e:
-                        print(f"⚠️ Не удалось отправить фото (finish): {e}")
-                        bot.send_message(chat_id, f"⚠️ Ошибка фото (конечная): {str(e)[:300]}")
+                    send_photo_with_fallback(chat_id, img_finish, "📍 Конечная фаза")
                 
                 # 3. Прямое mp4-видео (если есть)
                 if direct_url and direct_url.strip().lower().endswith(('.mp4', '.webm', '.mov')):
