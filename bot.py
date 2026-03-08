@@ -212,14 +212,10 @@ def callback_handler(call):
                 text += f"*Описание:* {desc}\n"
                 if equip:
                     text += f"*Оборудование:* {equip}\n"
-                if yt_link and yt_link.startswith('http') and not direct_url:
+                if yt_link and yt_link.startswith('http'):
                     text += f"\n▶️ [Смотреть на YouTube]({yt_link})"
                 
                 markup = types.InlineKeyboardMarkup(row_width=1)
-                if yt_link and yt_link.startswith('http') and not direct_url:
-                    markup.add(types.InlineKeyboardButton("🎥 Смотреть на YouTube", url=yt_link))
-                elif yt_link and yt_link.startswith('http'):
-                    markup.add(types.InlineKeyboardButton("🎥 Также на YouTube", url=yt_link))
                 markup.add(types.InlineKeyboardButton("◀️ Назад", callback_data=f'group_{group}'))
                 markup.add(types.InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu"))
                 markup.add(types.InlineKeyboardButton("📜 Моя история", callback_data="history"))
