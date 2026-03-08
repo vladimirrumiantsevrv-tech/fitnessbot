@@ -49,11 +49,20 @@ def get_exercise_by_id(exercise_id):
     """Получить детали упражнения по ID"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM exercises WHERE id = %s', (exercise_id,))
-    exercise = cursor.fetchone()
+    cursor.execute(
+        '''SELECT id, muscle_group, exercise_name, description, youtube_link,
+                  equipment_needed, direct_video_url, image_url,
+                  image_start_url, image_finish_url
+           FROM exercises WHERE id = %s''',
+        (exercise_id,)
+    )
+    row = cursor.fetchone()
     conn.close()
-    if exercise:
-        exercise['direct_video_url'] = exercise.get('direct_video_url') or ''
+    if not row:
+        return None
+    # Преобразуем в обычный dict (RealDictRow может вести себя иначе)
+    exercise = dict(row)
+    exercise['direct_video_url'] = exercise.get('direct_video_url') or ''
     return exercise
 
 def add_to_history(user_id, exercise_id):
