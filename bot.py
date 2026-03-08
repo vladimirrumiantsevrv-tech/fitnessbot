@@ -340,7 +340,8 @@ def callback_handler(call):
     
     except Exception as e:
         print(f"❌ Ошибка: {e}")
-        bot.send_message(chat_id, "❌ Произошла ошибка. Нажми /start")
+        err_msg = str(e).replace('<', '').replace('>', '')[:250]
+        bot.send_message(chat_id, f"❌ Произошла ошибка. Нажми /start\n\n_Ошибка: {err_msg}_", parse_mode='Markdown')
 
 # Запуск бота
 if __name__ == "__main__":
