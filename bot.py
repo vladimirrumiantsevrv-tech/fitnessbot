@@ -88,7 +88,29 @@ def get_user_history(user_id, limit=15):
     conn.close()
     return rows
 
-# Проверка подключения к БД
+# Проверка подключения к БД и создание user_history при отсутствии
+def ensure_history_table():
+    """Создаёт таблицу user_history, если её нет"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_history (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                exercise_id INTEGER NOT NULL REFERENCES exercises(id),
+                selected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_history_user_id ON user_history(user_id)')
+        conn.commit()
+        print("✅ Таблица user_history готова")
+    except Exception as e:
+        conn.rollback()
+        print(f"⚠️ user_history: {e}")
+    finally:
+        conn.close()
+
 try:
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -97,6 +119,7 @@ try:
     conn.close()
     print(f"✅ Подключено к БД. Найдено {count} упражнений")
     print(f"📊 Группы мышц: {', '.join(get_groups())}")
+    ensure_history_table()
 except Exception as e:
     print(f"❌ Ошибка подключения к БД: {e}")
 
@@ -220,18 +243,18 @@ def callback_handler(call):
                 history = []
             
             if not history:
-                text = "📜 *Твоя история пуста*\n\nВыбери упражнение — оно появится здесь."
+                text = "📜 <b>Твоя история пуста</b>\n\nВыбери упражнение — оно появится здесь."
             else:
-                text = "📜 *Твоя история упражнений:*\n\n"
+                text = "📜 <b>Твоя история упражнений:</b>\n\n"
                 seen_ids = set()
                 for row in history:
                     ex_id = row['exercise_id']
                     if ex_id in seen_ids:
                         continue
                     seen_ids.add(ex_id)
-                    name = row['exercise_name']
-                    muscle = row['muscle_group']
-                    text += f"• *{name}* ({muscle})\n"
+                    name = row['exercise_name'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    muscle = row['muscle_group'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    text += f"• <b>{name}</b> ({muscle})\n"
             
             markup = types.InlineKeyboardMarkup(row_width=1)
             seen_btn = set()
@@ -251,7 +274,7 @@ def callback_handler(call):
                 message_id=message_id,
                 text=text,
                 reply_markup=markup,
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
         
         # Навигационные кнопки
