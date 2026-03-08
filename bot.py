@@ -23,23 +23,42 @@ print("=" * 50)
 # Создаем бота
 bot = telebot.TeleBot(TOKEN)
 
+def _is_image_data(data):
+    """Проверка по magic bytes: JPEG, PNG, GIF, WebP"""
+    if not data or len(data) < 4:
+        return False
+    d = data[:12]
+    if d[:2] == b'\xff\xd8':
+        return True  # JPEG
+    if d[:8] == b'\x89PNG\r\n\x1a\n':
+        return True  # PNG
+    if d[:6] in (b'GIF87a', b'GIF89a'):
+        return True  # GIF
+    if d[:4] == b'RIFF' and d[8:12] == b'WEBP':
+        return True  # WebP
+    return False
+
 def send_photo_with_fallback(chat_id, url, caption=""):
-    """Сначала пробует по URL, при ошибке — скачивает и отправляет байтами"""
+    """Сначала по URL, при ошибке — скачивает и отправляет. С retry."""
     try:
         bot.send_photo(chat_id=chat_id, photo=url, caption=caption)
         return True
     except Exception as e:
         print(f"⚠️ send_photo URL fail: {e}")
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; rv:91.0) Gecko/20100101 Firefox/91.0'}
+    for attempt in range(2):
         try:
-            r = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0 (compatible)'})
+            if attempt > 0:
+                time.sleep(1.5)
+            r = requests.get(url, timeout=20, headers=headers)
             r.raise_for_status()
-            ct = r.headers.get('content-type', '')
-            if 'image' in ct or not ct:
-                bot.send_photo(chat_id=chat_id, photo=r.content, caption=caption)
+            data = r.content
+            if _is_image_data(data):
+                bot.send_photo(chat_id=chat_id, photo=data, caption=caption)
                 return True
         except Exception as e2:
-            print(f"⚠️ send_photo fallback fail: {e2}")
-        return False
+            print(f"⚠️ send_photo fallback attempt {attempt+1}: {e2}")
+    return False
 
 # Функции для работы с PostgreSQL
 def get_db_connection():
