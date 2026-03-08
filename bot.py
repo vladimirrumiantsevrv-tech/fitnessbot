@@ -123,25 +123,33 @@ try:
 except Exception as e:
     print(f"❌ Ошибка подключения к БД: {e}")
 
+def get_main_menu_markup():
+    """Главное меню"""
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("🏋️ Начать тренировку", callback_data="start_workout"))
+    markup.add(types.InlineKeyboardButton("✅ Завершить тренировку", callback_data="finish_workout"))
+    markup.add(types.InlineKeyboardButton("📜 Моя история", callback_data="history"))
+    return markup
+
+def get_groups_markup():
+    """Меню групп мышц"""
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    groups = get_groups()
+    for group in groups:
+        markup.add(types.InlineKeyboardButton(group, callback_data=f'group_{group}'))
+    markup.add(types.InlineKeyboardButton("✅ Завершить тренировку", callback_data="main_menu"))
+    return markup
+
 # Обработчик команды /start
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    """Показывает группы мышц"""
+    """Главное меню"""
     print(f"📨 /start от {message.from_user.first_name}")
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    groups = get_groups()
-    
-    for group in groups:
-        button = types.InlineKeyboardButton(group, callback_data=f'group_{group}')
-        markup.add(button)
-    
-    markup.add(types.InlineKeyboardButton("📜 Моя история", callback_data="history"))
     
     bot.send_message(
         message.chat.id,
-        f"👋 Привет, {message.from_user.first_name}!\n\nВыбери группу мышц:",
-        reply_markup=markup
+        f"👋 Привет, {message.from_user.first_name}!\n\nЧто делаем?",
+        reply_markup=get_main_menu_markup()
     )
 
 # Обработчик нажатий на кнопки
@@ -154,22 +162,25 @@ def callback_handler(call):
     bot.answer_callback_query(call.id)  # снимаем индикатор загрузки
     
     try:
+        # Начать тренировку — показать группы
+        if data == "start_workout":
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text="💪 Выбери группу мышц:",
+                reply_markup=get_groups_markup()
+            )
+
         # Нажатие на группу мышц
-        if data.startswith('group_'):
+        elif data.startswith('group_'):
             group = data.replace('group_', '')
             exercises = get_exercises_by_group(group)
             
             markup = types.InlineKeyboardMarkup(row_width=1)
-            
             for ex in exercises:
-                button = types.InlineKeyboardButton(
-                    ex['exercise_name'], 
-                    callback_data=f'ex_{ex["id"]}'
-                )
-                markup.add(button)
-            
+                markup.add(types.InlineKeyboardButton(ex['exercise_name'], callback_data=f'ex_{ex["id"]}'))
             markup.add(types.InlineKeyboardButton("◀️ Назад к группам", callback_data="back_to_groups"))
-            markup.add(types.InlineKeyboardButton("📜 Моя история", callback_data="history"))
+            markup.add(types.InlineKeyboardButton("✅ Завершить тренировку", callback_data="main_menu"))
             
             bot.edit_message_text(
                 chat_id=chat_id,
@@ -194,20 +205,37 @@ def callback_handler(call):
                 direct_url = exercise.get('direct_video_url') or ''
                 equip = exercise['equipment_needed']
                 group = exercise['muscle_group']
+                img_start = exercise.get('image_start_url') or ''
+                img_finish = exercise.get('image_finish_url') or ''
                 
-                # Прямое mp4-видео — показываем встроенно в Telegram
+                # 1. Редактируем сообщение в заголовок (техника ниже)
+                bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=f"🏋️‍♂️ *{name}*\n\n⬇️ Техника выполнения ниже",
+                    parse_mode='Markdown'
+                )
+                
+                # 2. Картинки техники — начало и окончание
+                if img_start and img_start.startswith('http'):
+                    try:
+                        bot.send_photo(chat_id=chat_id, photo=img_start, caption="📍 Исходное положение")
+                    except Exception as e:
+                        print(f"⚠️ Не удалось отправить фото: {e}")
+                if img_finish and img_finish.startswith('http'):
+                    try:
+                        bot.send_photo(chat_id=chat_id, photo=img_finish, caption="📍 Конечная фаза")
+                    except Exception as e:
+                        print(f"⚠️ Не удалось отправить фото: {e}")
+                
+                # 3. Прямое mp4-видео (если есть)
                 if direct_url and direct_url.strip().lower().endswith(('.mp4', '.webm', '.mov')):
                     try:
-                        bot.send_video(
-                            chat_id=chat_id,
-                            video=direct_url.strip(),
-                            caption=f"🎥 *{name}*",
-                            parse_mode='Markdown'
-                        )
+                        bot.send_video(chat_id=chat_id, video=direct_url.strip(), caption=f"🎥 {name}")
                     except Exception as e:
                         print(f"⚠️ Не удалось отправить видео: {e}")
                 
-                # Формируем текст
+                # 4. Описание упражнения (новое сообщение внизу)
                 text = f"🏋️‍♂️ *{name}*\n\n"
                 text += f"*Описание:* {desc}\n"
                 if equip:
@@ -216,13 +244,12 @@ def callback_handler(call):
                     text += f"\n▶️ [Смотреть на YouTube]({yt_link})"
                 
                 markup = types.InlineKeyboardMarkup(row_width=1)
-                markup.add(types.InlineKeyboardButton("◀️ Назад", callback_data=f'group_{group}'))
-                markup.add(types.InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu"))
-                markup.add(types.InlineKeyboardButton("📜 Моя история", callback_data="history"))
+                markup.add(types.InlineKeyboardButton("✅ Выполнил", callback_data="back_to_groups"))
+                markup.add(types.InlineKeyboardButton("◀️ Назад к упражнениям", callback_data=f'group_{group}'))
+                markup.add(types.InlineKeyboardButton("✅ Завершить тренировку", callback_data="main_menu"))
                 
-                bot.edit_message_text(
+                bot.send_message(
                     chat_id=chat_id,
-                    message_id=message_id,
                     text=text,
                     reply_markup=markup,
                     parse_mode='Markdown',
@@ -273,22 +300,23 @@ def callback_handler(call):
                 parse_mode='HTML'
             )
         
-        # Навигационные кнопки
-        elif data == "back_to_groups" or data == "main_menu":
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            groups = get_groups()
-            
-            for group in groups:
-                button = types.InlineKeyboardButton(group, callback_data=f'group_{group}')
-                markup.add(button)
-            
-            markup.add(types.InlineKeyboardButton("📜 Моя история", callback_data="history"))
-            
+        # Выполнил — вернуться к группам мышц
+        elif data == "back_to_groups":
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
-                text="Выбери группу мышц:",
-                reply_markup=markup
+                text="💪 Выбери группу мышц:",
+                reply_markup=get_groups_markup()
+            )
+
+        # Главное меню / Завершить тренировку
+        elif data == "main_menu" or data == "finish_workout":
+            text = "Что делаем?" if data == "main_menu" else "✅ Тренировка завершена!\n\nЧто делаем?"
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=get_main_menu_markup()
             )
     
     except Exception as e:
