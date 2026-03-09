@@ -23,6 +23,10 @@ print("=" * 50)
 # Создаем бота
 bot = telebot.TeleBot(TOKEN)
 
+# Простое состояние активной тренировки по пользователю
+# (память процесса; для простого бота этого достаточно)
+ACTIVE_WORKOUTS = set()
+
 def _is_image_data(data):
     """Проверка по magic bytes: JPEG, PNG, GIF, WebP"""
     if not data or len(data) < 4:
@@ -141,9 +145,44 @@ def get_user_history(user_id, limit=15):
     conn.close()
     return rows
 
-# Проверка подключения к БД и создание user_history при отсутствии
+# Отметка выполненных упражнений
+def add_completed_exercise(user_id, exercise_id):
+    """Сохранить выполненное упражнение пользователя"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            'INSERT INTO user_completed (user_id, exercise_id) VALUES (%s, %s)',
+            (user_id, exercise_id)
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"⚠️ Завершённые упражнения: {e}")
+    finally:
+        conn.close()
+
+def get_today_completed_exercises(user_id):
+    """Получить упражнения, отмеченные выполненными сегодня"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT uc.exercise_id,
+               uc.completed_at,
+               e.exercise_name
+        FROM user_completed uc
+        JOIN exercises e ON e.id = uc.exercise_id
+        WHERE uc.user_id = %s
+          AND uc.completed_at::date = CURRENT_DATE
+        ORDER BY uc.completed_at
+    ''', (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+# Проверка подключения к БД и создание таблиц истории при отсутствии
 def ensure_history_table():
-    """Создаёт таблицу user_history, если её нет"""
+    """Создаёт таблицы user_history и user_completed, если их нет"""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -156,8 +195,17 @@ def ensure_history_table():
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_history_user_id ON user_history(user_id)')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_completed (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                exercise_id INTEGER NOT NULL REFERENCES exercises(id),
+                completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_completed_user_id ON user_completed(user_id)')
         conn.commit()
-        print("✅ Таблица user_history готова")
+        print("✅ Таблицы user_history и user_completed готовы")
     except Exception as e:
         conn.rollback()
         print(f"⚠️ user_history: {e}")
@@ -176,12 +224,12 @@ try:
 except Exception as e:
     print(f"❌ Ошибка подключения к БД: {e}")
 
-def get_main_menu_markup():
+def get_main_menu_markup(in_workout: bool = False):
     """Главное меню"""
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(types.InlineKeyboardButton("🏋️ Начать тренировку", callback_data="start_workout"))
-    markup.add(types.InlineKeyboardButton("✅ Завершить тренировку", callback_data="finish_workout"))
-    markup.add(types.InlineKeyboardButton("📜 Моя история", callback_data="history"))
+    if in_workout:
+        markup.add(types.InlineKeyboardButton("✅ Завершить тренировку", callback_data="finish_workout"))
     return markup
 
 def get_groups_markup():
@@ -190,7 +238,7 @@ def get_groups_markup():
     groups = get_groups()
     for group in groups:
         markup.add(types.InlineKeyboardButton(group, callback_data=f'group_{group}'))
-    markup.add(types.InlineKeyboardButton("✅ Завершить тренировку", callback_data="main_menu"))
+    markup.add(types.InlineKeyboardButton("✅ Завершить тренировку", callback_data="finish_workout"))
     return markup
 
 # Обработчик команды /start
@@ -198,11 +246,15 @@ def get_groups_markup():
 def send_welcome(message):
     """Главное меню"""
     print(f"📨 /start от {message.from_user.first_name}")
-    
+    welcome_text = (
+        "Привет! Я твой личный помощник в тренировках.\n"
+        "Я подскажу тебе варианты упражнений, которые собраны с учетом оборудования твоего зала!"
+    )
+    in_workout = message.from_user.id in ACTIVE_WORKOUTS
     bot.send_message(
         message.chat.id,
-        f"👋 Привет, {message.from_user.first_name}!\n\nЧто делаем?",
-        reply_markup=get_main_menu_markup()
+        welcome_text,
+        reply_markup=get_main_menu_markup(in_workout=in_workout)
     )
 
 # Обработчик нажатий на кнопки
@@ -217,6 +269,7 @@ def callback_handler(call):
     try:
         # Начать тренировку — показать группы
         if data == "start_workout":
+            ACTIVE_WORKOUTS.add(call.from_user.id)
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -233,7 +286,7 @@ def callback_handler(call):
             for ex in exercises:
                 markup.add(types.InlineKeyboardButton(ex['exercise_name'], callback_data=f'ex_{ex["id"]}'))
             markup.add(types.InlineKeyboardButton("◀️ Назад к группам", callback_data="back_to_groups"))
-            markup.add(types.InlineKeyboardButton("✅ Завершить тренировку", callback_data="main_menu"))
+            markup.add(types.InlineKeyboardButton("✅ Завершить тренировку", callback_data="finish_workout"))
             
             bot.edit_message_text(
                 chat_id=chat_id,
@@ -292,9 +345,9 @@ def callback_handler(call):
                     text += f"\n▶️ [Смотреть на YouTube]({yt_link})"
                 
                 markup = types.InlineKeyboardMarkup(row_width=1)
-                markup.add(types.InlineKeyboardButton("✅ Выполнил", callback_data="back_to_groups"))
+                markup.add(types.InlineKeyboardButton("✅ Выполнил", callback_data=f'done_{exercise_id}'))
                 markup.add(types.InlineKeyboardButton("◀️ Назад к упражнениям", callback_data=f'group_{group}'))
-                markup.add(types.InlineKeyboardButton("✅ Завершить тренировку", callback_data="main_menu"))
+                markup.add(types.InlineKeyboardButton("✅ Завершить тренировку", callback_data="finish_workout"))
                 
                 bot.send_message(
                     chat_id=chat_id,
@@ -304,52 +357,11 @@ def callback_handler(call):
                     disable_web_page_preview=bool(direct_url)
                 )
         
-        # История выбранных упражнений
-        elif data == "history":
+        # Выполнил — сохранить и вернуться к группам мышц
+        elif data.startswith('done_'):
+            exercise_id = int(data.replace('done_', ''))
             user_id = call.from_user.id
-            try:
-                history = get_user_history(user_id)
-            except Exception as e:
-                print(f"⚠️ История: {e}")
-                history = []
-            
-            if not history:
-                text = "📜 <b>Твоя история пуста</b>\n\nВыбери упражнение — оно появится здесь."
-            else:
-                text = "📜 <b>Твоя история упражнений:</b>\n\n"
-                seen_ids = set()
-                for row in history:
-                    ex_id = row['exercise_id']
-                    if ex_id in seen_ids:
-                        continue
-                    seen_ids.add(ex_id)
-                    name = row['exercise_name'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                    muscle = row['muscle_group'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                    text += f"• <b>{name}</b> ({muscle})\n"
-            
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            seen_btn = set()
-            for row in history:
-                if len(seen_btn) >= 10:
-                    break
-                ex_id = row['exercise_id']
-                if ex_id in seen_btn:
-                    continue
-                seen_btn.add(ex_id)
-                name = row['exercise_name'][:35] + "…" if len(row['exercise_name']) > 35 else row['exercise_name']
-                markup.add(types.InlineKeyboardButton(f"📍 {name}", callback_data=f"ex_{ex_id}"))
-            markup.add(types.InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu"))
-            
-            bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=text,
-                reply_markup=markup,
-                parse_mode='HTML'
-            )
-        
-        # Выполнил — вернуться к группам мышц
-        elif data == "back_to_groups":
+            add_completed_exercise(user_id, exercise_id)
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -357,14 +369,47 @@ def callback_handler(call):
                 reply_markup=get_groups_markup()
             )
 
-        # Главное меню / Завершить тренировку
-        elif data == "main_menu" or data == "finish_workout":
-            text = "Что делаем?" if data == "main_menu" else "✅ Тренировка завершена!\n\nЧто делаем?"
+        # Главное меню
+        elif data == "main_menu":
+            user_id = call.from_user.id
+            in_workout = user_id in ACTIVE_WORKOUTS
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text="Что делаем?",
+                reply_markup=get_main_menu_markup(in_workout=in_workout)
+            )
+
+        # Завершить тренировку — показать выполненные упражнения за сегодня
+        elif data == "finish_workout":
+            user_id = call.from_user.id
+            if user_id not in ACTIVE_WORKOUTS:
+                bot.answer_callback_query(call.id, text="Сначала нажми «Начать тренировку» 💪", show_alert=True)
+                return
+
+            completed = get_today_completed_exercises(user_id)
+            if not completed:
+                text = (
+                    "Отличный результат! Сегодня ты пока не отметил ни одного упражнения выполненным.\n\n"
+                    "Выбери упражнение, нажми «Выполнил» и возвращайся к этой кнопке."
+                )
+            else:
+                seen = set()
+                lines = []
+                for row in completed:
+                    name = row['exercise_name']
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                    lines.append(f"• {name}")
+                text = "Отличный результат! Сегодня ты выполнил:\n\n" + "\n".join(lines)
+
+            ACTIVE_WORKOUTS.discard(user_id)
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
                 text=text,
-                reply_markup=get_main_menu_markup()
+                reply_markup=get_main_menu_markup(in_workout=False)
             )
     
     except Exception as e:
