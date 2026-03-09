@@ -24,8 +24,9 @@ print("=" * 50)
 bot = telebot.TeleBot(TOKEN)
 
 # Простое состояние активной тренировки по пользователю
-# (память процесса; для простого бота этого достаточно)
 ACTIVE_WORKOUTS = set()
+# Упражнения, отмеченные «Выполнил» в текущей сессии (только с «Начать тренировку»)
+SESSION_COMPLETED = {}  # user_id -> list of exercise names
 
 def _is_image_data(data):
     """Проверка по magic bytes: JPEG, PNG, GIF, WebP"""
@@ -269,7 +270,9 @@ def callback_handler(call):
     try:
         # Начать тренировку — показать группы
         if data == "start_workout":
-            ACTIVE_WORKOUTS.add(call.from_user.id)
+            user_id = call.from_user.id
+            ACTIVE_WORKOUTS.add(user_id)
+            SESSION_COMPLETED[user_id] = []
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -357,11 +360,23 @@ def callback_handler(call):
                     disable_web_page_preview=bool(direct_url)
                 )
         
-        # Выполнил — сохранить и вернуться к группам мышц
+        # Выполнил — сохранить в сессию и в БД, вернуться к группам мышц
         elif data.startswith('done_'):
             exercise_id = int(data.replace('done_', ''))
             user_id = call.from_user.id
             add_completed_exercise(user_id, exercise_id)
+            ex = get_exercise_by_id(exercise_id)
+            if ex and user_id in SESSION_COMPLETED:
+                SESSION_COMPLETED[user_id].append(ex['exercise_name'])
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text="💪 Выбери группу мышц:",
+                reply_markup=get_groups_markup()
+            )
+
+        # Назад к списку групп мышц (из списка упражнений)
+        elif data == "back_to_groups":
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -380,31 +395,25 @@ def callback_handler(call):
                 reply_markup=get_main_menu_markup(in_workout=in_workout)
             )
 
-        # Завершить тренировку — показать выполненные упражнения за сегодня
+        # Завершить тренировку — показать упражнения, отмеченные в этой сессии
         elif data == "finish_workout":
             user_id = call.from_user.id
             if user_id not in ACTIVE_WORKOUTS:
                 bot.answer_callback_query(call.id, text="Сначала нажми «Начать тренировку» 💪", show_alert=True)
                 return
 
-            completed = get_today_completed_exercises(user_id)
-            if not completed:
+            completed_names = SESSION_COMPLETED.get(user_id, [])
+            if not completed_names:
                 text = (
-                    "Отличный результат! Сегодня ты пока не отметил ни одного упражнения выполненным.\n\n"
+                    "Отличный результат! В этой тренировке ты пока не отметил ни одного упражнения выполненным.\n\n"
                     "Выбери упражнение, нажми «Выполнил» и возвращайся к этой кнопке."
                 )
             else:
-                seen = set()
-                lines = []
-                for row in completed:
-                    name = row['exercise_name']
-                    if name in seen:
-                        continue
-                    seen.add(name)
-                    lines.append(f"• {name}")
-                text = "Отличный результат! Сегодня ты выполнил:\n\n" + "\n".join(lines)
+                lines = [f"• {name}" for name in completed_names]
+                text = "Отличный результат! В этой тренировке ты выполнил:\n\n" + "\n".join(lines)
 
             ACTIVE_WORKOUTS.discard(user_id)
+            SESSION_COMPLETED.pop(user_id, None)
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
